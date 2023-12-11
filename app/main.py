@@ -1,6 +1,7 @@
 import argparse
 import sys
 import time
+from datetime import datetime
 
 import cv2
 import mediapipe as mp
@@ -9,9 +10,17 @@ from app.detector import MediapipeStreamObjectDetector
 from app.utils import visualize
 
 
+last_five_person_count = []
+person_window = 7
+last_person_count = 0
+
+
 def run(
     model: str, camera_id: int, width: int, height: int, has_gui: bool, threshold: float
 ) -> None:
+    global last_five_person_count
+    global last_person_count
+    
     counter = 0
     fps = 0
     start_time = time.time()
@@ -78,13 +87,40 @@ def run(
                         detector.result_list[0].confidences,
                     )
                 }
-                print(f"{fps_text} \t Detections: {detections_dict}")
+            
+            last_person_count = 0
+            if len(last_five_person_count) >= person_window:
+                last_person_count = max(last_five_person_count)
+                last_five_person_count.pop(0)
+                # print(f"person count: {last_person_count}")
+            person_dict = {}
+            current_count = 0
+            for label, score in zip(detector.result_list[0].labels, detector.result_list[0].confidences):
+                if label == "person" and score > threshold:
+                    if label in person_dict:
+                        person_dict[label + str(current_count+1)] = score
+                    else:
+                        person_dict[label] = score
+                    current_count += 1
+                else:
+                    current_count = 0
+
+            if current_count >= 2 and current_count > last_person_count:
+                print(f"Event (person count changed): from {last_person_count} to {current_count}")
+                print(f"{fps_text} \t Detections: {person_dict}, datetime: {datetime.now()}")
+
+            if current_count > last_person_count:
+                last_person_count = current_count
+
+            last_five_person_count.append(current_count)
             detector.result_list.clear()
 
         elif has_gui:
             cv2.imshow("object_detector", current_frame)
 
-        if cv2.waitKey(1) == 27:
+        if cv2.waitKey(1) == 27 or cv2.getWindowProperty(
+            "object_detector", cv2.WND_PROP_VISIBLE
+        ) < 1:
             break
 
     detector.detector.close()
